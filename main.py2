@@ -1,0 +1,348 @@
+#!/usr/bin/env python3
+"""
+WebStrike Pro - Advanced Web Security Testing Platform
+⚠️  WARNING: For authorized security testing only!
+"""
+import asyncio
+import argparse
+import sys
+import os
+import aiofiles
+from pathlib import Path
+from urllib.parse import urlparse, parse_qs
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+from core.async_engine import AsyncEngine
+from core.scope_guard import ScopeGuard
+from core.stealth_manager import StealthManager
+from core.waf_evasion import WAFEvasion
+from modules.crawler import Crawler
+from modules.hidden_scanner import HiddenScanner
+from modules.php_leak import PHPLeakDetector
+from modules.js_analyzer import JSAnalyzer
+from detection.xss_scanner import XSSScanner
+from detection.sqli_scanner import SQLiScanner
+from integrations.nuclei import NucleiIntegration
+from utils.reporter import Reporter
+from modules.xml_analyzer import XMLAnalyzer
+
+
+async def download_files(engine, urls, base_url: str, output_dir: str, max_files: int = 1000):
+    """Download discovered files preserving directory structure"""
+    base_parsed = urlparse(base_url)
+    base_netloc = base_parsed.netloc.replace(":", "_")  # إزالة : للـ Windows
+
+    download_dir = Path(output_dir) / "downloads" / base_netloc
+    download_dir.mkdir(parents=True, exist_ok=True)
+
+    downloaded_count = 0
+
+    for url in urls[:max_files]:
+        try:
+            result = await engine.request("GET", url)
+            if result and hasattr(result, 'status') and result.status == 200 and result.body:
+                parsed = urlparse(url)
+                relative_path = parsed.path.lstrip('/')
+
+                # إزالة العناصر الخطرة من المسار
+                safe_parts = []
+                for part in relative_path.split('/'):
+                    # تجنب .. و . وأسماء محجوزة في Windows
+                    if part in ('..', '.') or part.upper() in ('CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'LPT1'):
+                        part = f"_{part}"
+                    safe_parts.append(part)
+
+                safe_path = '/'.join(safe_parts)
+                if not safe_path:
+                    safe_path = "index.html"
+
+                local_path = download_dir / safe_path
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+
+                # حفظ الملف
+                content = result.body
+                if isinstance(content, str):
+                    async with aiofiles.open(local_path, 'w', encoding='utf-8') as f:
+                        await f.write(content)
+                else:
+                    async with aiofiles.open(local_path, 'wb') as f:
+                        await f.write(content)
+
+                downloaded_count += 1
+                print(f"  [+] Downloaded: {url} -> {local_path}")
+
+        except Exception as e:
+            if "-v" in sys.argv or "--verbose" in sys.argv:
+                print(f"  [!] Failed to download {url}: {e}")
+
+    print(f"\n[+] Total downloaded: {downloaded_count} files to {download_dir}")
+    return downloaded_count
+
+
+async def main():
+    parser = argparse.ArgumentParser(
+        description="WebStrike Pro - Advanced Web Security Testing",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Basic scan with stealth
+  python main.py -u https://example.com --stealth
+
+  # Full scan with all modules
+  python main.py -u https://example.com --full --scope *.example.com
+
+  # Download all discovered files
+  python main.py -u https://example.com --full --download
+
+  # Aggressive WAF evasion
+  python main.py -u https://example.com --waf-evasion aggressive
+        """
+    )
+
+    parser.add_argument("-u", "--url", required=True, help="Target URL")
+    parser.add_argument("--scope", nargs="+", help="Scope targets (e.g., *.example.com 192.168.1.0/24)")
+    parser.add_argument("--threads", type=int, default=50, help="Concurrent threads (default: 50)")
+    parser.add_argument("--delay", type=float, default=0.0, help="Delay between requests")
+    parser.add_argument("--timeout", type=int, default=10, help="Request timeout")
+    parser.add_argument("--depth", type=int, default=3, help="Crawl depth")
+
+    # Stealth & Evasion
+    parser.add_argument("--stealth", action="store_true", help="Enable stealth mode")
+    parser.add_argument("--waf-evasion", choices=["basic", "aggressive"], 
+                       help="WAF evasion level")
+
+    # Scan modules
+    parser.add_argument("--full", action="store_true", help="Enable all scan modules")
+    parser.add_argument("--crawl", action="store_true", help="Enable crawling")
+    parser.add_argument("--hidden", action="store_true", help="Scan for hidden files")
+    parser.add_argument("-l", "--wordlist", help="Path to custom wordlist file")
+    parser.add_argument("--php-leak", action="store_true", help="Detect PHP source leaks")
+    parser.add_argument("--js-analyze", action="store_true", help="Analyze JavaScript files")
+    parser.add_argument('--xml-analyze', action='store_true', help='XML configuration files analysis')
+    parser.add_argument("--xss", action="store_true", help="Scan for XSS")
+    parser.add_argument("--sqli", action="store_true", help="Scan for SQL Injection")
+
+    # Download option
+    parser.add_argument("--download", action="store_true", 
+                       help="Download discovered files preserving directory structure")
+    parser.add_argument("--max-download", type=int, default=1000,
+                       help="Maximum files to download (default: 1000)")
+
+    # Integrations
+    parser.add_argument("--nuclei", action="store_true", help="Run Nuclei scan")
+    parser.add_argument("--severity", default="critical,high,medium", 
+                       help="Nuclei severity levels")
+
+    # Output
+    parser.add_argument("-o", "--output", default="reports", help="Output directory")
+    parser.add_argument("--format", choices=["json", "html", "csv", "all"], 
+                       default="all", help="Report format")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
+
+    args = parser.parse_args()
+
+    print("""
+    ╔═══════════════════════════════════════════════════╗
+    ║     WebStrike Pro - Security Testing Platform     ║
+    ║         ⚠️  Authorized Use Only ⚠️                  ║
+    ╚═══════════════════════════════════════════════════╝
+    """)
+
+    # Scope verification
+    scope_targets = args.scope or [urlparse(args.url).hostname or args.url]
+    scope_guard = ScopeGuard(scope_targets, strict_mode=True)
+
+    print(f"[+] Target: {args.url}")
+    print(f"[+] Scope: {scope_targets}")
+
+    crawler = None  # تعريف مسبق
+
+    # Initialize components
+    async with AsyncEngine(
+        threads=args.threads,
+        delay=args.delay,
+        timeout=args.timeout
+    ) as engine:
+
+        stealth = None
+        if args.stealth:
+            stealth = StealthManager(aggressive=True)
+            print("[+] Stealth mode enabled")
+
+        waf = None
+        if args.waf_evasion:
+            waf = WAFEvasion(technique=args.waf_evasion)
+            print(f"[+] WAF evasion: {args.waf_evasion}")
+
+        reporter = Reporter(args.output)
+
+        # 1. Crawling (مطلوب لمعظم العمليات)
+        if args.crawl or args.full or args.download or args.js_analyze or args.xml_analyze:
+            print("\n[*] Phase 1: Crawling...")
+            crawler = Crawler(engine, scope_guard, stealth, args.depth)
+            crawl_results = await crawler.crawl(args.url)
+            print(f"[+] Discovered {len(crawler.discovered_urls)} URLs")
+            print(f"[+] Found {len(crawler.forms)} forms")
+            print(f"[+] Found {len(crawler.js_files)} JS files")
+
+        # Download files if requested
+        if args.download and crawler and crawler.discovered_urls:
+            print(f"\n[*] Downloading files (max {args.max_download})...")
+            await download_files(
+                engine, 
+                list(crawler.discovered_urls), 
+                args.url, 
+                args.output,
+                args.max_download
+            )
+
+        # 2. Hidden Files Scan
+        if args.hidden or args.full:
+            print("\n[*] Phase 2: Hidden Files Scan...")
+            hidden_scanner = HiddenScanner(engine, scope_guard, waf, custom_wordlist=args.wordlist)
+            hidden_results = await hidden_scanner.scan(args.url)
+            print(f"[+] Found {len(hidden_results)} hidden files")
+
+            for finding in hidden_scanner.get_critical_findings():
+                reporter.add_finding(finding)
+
+        # 3. PHP Leak Detection
+        if args.php_leak or args.full:
+            print("\n[*] Phase 3: PHP Source Leak Detection...")
+            php_detector = PHPLeakDetector()
+            php_results = await php_detector.scan_directory(
+                engine, args.url, ["index.php", "config.php", "admin.php"]
+            )
+            print(f"[+] Found {len(php_results)} PHP leaks")
+            for finding in php_results:
+                reporter.add_finding(finding)
+
+        # 4. JavaScript Analysis
+        if args.js_analyze or args.full:
+            print("\n[*] Phase 4: JavaScript Analysis...")
+            js_analyzer = JSAnalyzer()
+            if crawler and crawler.js_files:
+                js_results = await js_analyzer.crawl_and_analyze(
+                    engine, list(crawler.js_files)[:20]
+                )
+                for url, analysis in js_results.items():
+                    if analysis["secrets"]:
+                        print(f"[+] Found secrets in {url}")
+                        reporter.add_finding({
+                            "type": "JS_SECRET",
+                            "url": url,
+                            "secrets": analysis["secrets"],
+                            "severity": "HIGH"
+                        })
+            else:
+                print("[!] No JavaScript files found")
+
+        # 4b. XML Analysis  
+        if args.xml_analyze or args.full:
+            print("\n[*] Phase 4b: XML Analysis...")
+            xml_analyzer = XMLAnalyzer(engine)
+
+            if crawler and crawler.discovered_urls:
+                xml_files = [url for url in crawler.discovered_urls 
+                           if url.endswith(('.xml', '.config', '.cfg', '.sip'))]
+
+                if xml_files:
+                    xml_results = await xml_analyzer.crawl_and_analyze(xml_files[:20])
+
+                    for url, analysis in xml_results.items():
+                        if analysis.get("sip_accounts") or analysis.get("secrets"):
+                            print(f"[+] XML findings in {url}:")
+
+                            for account in analysis.get("sip_accounts", []):
+                                if account.get("username"):
+                                    print(f"    - SIP: {account['username']}@{account.get('server', 'N/A')}")
+
+                            reporter.add_finding({
+                                "type": "XML_CONFIG",
+                                "url": url,
+                                "device_type": analysis.get("device_type"),
+                                "sip_accounts_count": len(analysis.get("sip_accounts", [])),
+                                "secrets_count": len(analysis.get("secrets", [])),
+                                "severity": "HIGH" if analysis.get("secrets") else "MEDIUM"
+                            })
+                else:
+                    print("[*] No XML files found")
+            else:
+                print("[!] Crawler not available for XML analysis")
+
+        # 5. XSS Scanning
+        if args.xss or args.full:
+            print("\n[*] Phase 5: XSS Scanning...")
+            if crawler and crawler.discovered_urls:
+                xss_scanner = XSSScanner(engine, waf)
+                test_urls = list(crawler.discovered_urls)[:10]
+                for url in test_urls:
+                    parsed = urlparse(url)
+                    if parsed.query:
+                        params = parse_qs(parsed.query)
+                        for param in params.keys():
+                            result = await xss_scanner.scan_reflected(url, param)
+                            if result:
+                                reporter.add_finding(result)
+                                print(f"[!] XSS found: {url}")
+            else:
+                print("[!] No URLs available for XSS scanning")
+
+        # 6. SQLi Scanning
+        if args.sqli or args.full:
+            print("\n[*] Phase 6: SQL Injection Scanning...")
+            if crawler and crawler.discovered_urls:
+                sqli_scanner = SQLiScanner(engine, waf)
+                test_urls = list(crawler.discovered_urls)[:10]
+                for url in test_urls:
+                    parsed = urlparse(url)
+                    if parsed.query:
+                        params = parse_qs(parsed.query)
+                        for param in params.keys():
+                            results = await sqli_scanner.scan(url, param)
+                            for finding in results:
+                                reporter.add_finding(finding)
+                                print(f"[!] SQLi found: {finding['subtype']} at {url}")
+            else:
+                print("[!] No URLs available for SQLi scanning")
+
+        # 7. Nuclei Integration
+        if args.nuclei:
+            print("\n[*] Phase 7: Nuclei Scan...")
+            nuclei = NucleiIntegration(severity=args.severity.split(','))
+            if nuclei.is_available():
+                nuclei_results = await nuclei.scan_target(args.url)
+                print(f"[+] Nuclei found {len(nuclei_results)} issues")
+                for result in nuclei_results:
+                    reporter.add_finding({
+                        "type": f"NUCLEI_{result['template']}",
+                        "url": result['host'],
+                        "severity": result['severity'].upper(),
+                        "description": result['name']
+                    })
+            else:
+                print("[!] Nuclei not found in PATH")
+
+        # Generate Reports
+        print("\n[*] Generating reports...")
+        if args.format in ["json", "all"]:
+            path = reporter.generate_json()
+            print(f"[+] JSON report: {path}")
+
+        if args.format in ["html", "all"]:
+            path = reporter.generate_html()
+            print(f"[+] HTML report: {path}")
+
+        if args.format in ["csv", "all"]:
+            path = reporter.generate_csv()
+            print(f"[+] CSV report: {path}")
+
+        print(f"\n[+] Scan completed! Total findings: {len(reporter.findings)}")
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n[!] Interrupted by user")
+        sys.exit(1)

@@ -1,0 +1,212 @@
+إليك التحديث على البرومبت مع إضافة خيار التحكم في تحميل الصور والفيديوهات:
+🆕 الإضافة الجديدة (بالعربي)
+خيار التحكم في الوسائط المتعددة (Media Control):
+--media / --no-media : تمكين أو تعطيل تحميل جميع الوسائط (الصور والفيديوهات والصوت)
+--images / --no-images : تحكم محدد في الصور (JPG, PNG, GIF, SVG, WebP)
+--videos / --no-videos : تحكم محدد في الفيديوهات (MP4, AVI, MOV, WMV, FLV, WebM)
+--audio / --no-audio : تحكم في الملفات الصوتية (MP3, WAV, OGG)
+المنطق الذكي:
+عند تعطيل الوسائط: يتم استبعادها من قائمة التحميل ولكن يتم تسجيلها في التقرير كـ "skipped_media" مع أحجامها التقديرية (لمعرفة حجم البيانات التي تم توفيرها)
+عند تمكينها: يتم تحميلها مع خيار --max-media-size لتحديد حجم أقصى للملفات الوسائط (مثال: --max-media-size 50 = تجاهل الملفات الأكبر من 50 ميجابايت)
+📝 البرومبت المحدث الكامل
+Text
+Copy
+**Prompt for AI Agent:**
+
+---
+
+**Role:** You are an expert Python developer specializing in web scraping, ethical hacking tools, and cross-platform automation scripts. Your task is to create a production-ready, multi-threaded website mirroring and reconnaissance tool.
+
+**Task:** Create a Python script named `web_recon.py` that performs complete website mirroring (downloading all files while preserving directory structure), discovers hidden files/directories using a wordlist, and implements advanced anti-detection mechanisms.
+
+**Core Requirements:**
+
+1. **Cross-Platform Compatibility:** Must work flawlessly on both Windows and Linux (handle path separators, file naming restrictions, encoding issues).
+
+2. **Hierarchical Directory Preservation:** Mirror the exact directory structure of the target website locally. Convert URLs to local paths correctly (e.g., `https://site.com/blog/post.php` → `mirror/site.com/blog/post.php`).
+
+3. **Smart File Discovery & Download:**
+   - Crawl all discovered HTML pages and extract links (href, src, url() in CSS).
+   - Download all assets (CSS, JS, Images, Fonts, PDFs, etc.).
+   - **Intelligent PHP Handling:** 
+     - By default, do NOT download `.php` files unless the server leaks source code.
+     - **Detection Logic:** If a `.php` file returns content containing PHP markers (`<?php`, `<?=`, `<?`), or PHP syntax patterns (`function`, `class`, `$variable`, `echo`, `include`), then download it as it indicates source code exposure.
+     - **Always download** PHP backup variants regardless: `.php.bak`, `.php~`, `.php.old`, `.php.swp`, `.php.save`, `.php.txt`, `.php.zip`.
+   - Support extension exclusion via `-e` flag (comma-separated, e.g., `-e php,css` skips these extensions unless they are backup variants).
+
+4. **Media Control Options (NEW):**
+   - `--media` / `--no-media`: Enable or disable downloading all media files (images, videos, audio). Default: `--media` (enabled).
+   - `--images` / `--no-images`: Specifically control image downloads (JPG, JPEG, PNG, GIF, SVG, WebP, ICO, BMP). Default: `--images` (enabled).
+   - `--videos` / `--no-videos`: Specifically control video downloads (MP4, AVI, MOV, WMV, FLV, WebM, MKV). Default: `--videos` (enabled).
+   - `--audio` / `--no-audio`: Specifically control audio downloads (MP3, WAV, OGG, AAC, FLAC). Default: `--audio` (enabled).
+   - `--max-media-size SIZE`: Maximum size in MB for media files. Files larger than this will be skipped with a warning. Default: 100 (set 0 to disable limit).
+
+5. **Hidden Files Discovery (Reconnaissance):**
+   - Read wordlist from file specified by `-l` flag.
+   - For **every directory discovered** during crawling, brute-force hidden files using the wordlist (append wordlist entries to directory paths).
+   - Example: If `/blog/` is found, test `/blog/.env`, `/blog/config.php`, `/blog/backup.zip`, etc.
+   - Use multi-threading for this operation.
+
+6. **Anti-Detection & Stealth Features (Mandatory):**
+   - **Rotating User-Agents:** Maintain a pool of 20+ real browser User-Agents (Chrome, Firefox, Safari on Windows/Mac/Linux). Rotate them frequently (every 3-5 requests).
+   - **Request Headers:** Randomize `Accept`, `Accept-Language`, `Accept-Encoding`, `Referer` (set referer to the parent page or homepage).
+   - **Request Delays:** Implement random delays between requests (jitter) within the range specified.
+   - **Session Management:** Use `requests.Session()` with cookie persistence but clear cookies periodically to avoid tracking.
+   - **Timeout Handling:** Configurable connection and read timeouts.
+
+7. **Multi-threading:** Use `ThreadPoolExecutor` for concurrent downloads. Separate thread pools for crawling and hidden file discovery to optimize performance.
+
+8. **Command Line Interface:**
+   ```bash
+   python web_recon.py <URL> [OPTIONS]
+   
+   Options:
+   -e, --exclude       Comma-separated extensions to exclude (e.g., php,css,js). Default: none (except applied smart logic).
+   -l, --wordlist      Path to wordlist file for hidden files discovery. Default: built-in common list.
+   -t, --threads       Number of concurrent threads. Default: 10.
+   -d, --delay         Format: "delay,timeout" (e.g., 0.1,2). Delay between requests (seconds) and request timeout (seconds). Default: 0.1,2.
+   -m, --max-files     Maximum number of files to download (0 or -1 for unlimited). Default: unlimited.
+   -o, --output        Output directory name. Default: "mirror".
+   --max-file-size     Skip files larger than X MB (default: 100MB). Set 0 to disable.
+   --depth             Maximum crawl depth (0 for unlimited). Default: 0.
+   
+   Media Control (NEW):
+   --media             Download media files (images, videos, audio). Default: True.
+   --no-media          Skip all media files.
+   --images            Download image files. Default: True.
+   --no-images         Skip image files.
+   --videos            Download video files. Default: True.
+   --no-videos         Skip video files.
+   --audio             Download audio files. Default: True.
+   --no-audio          Skip audio files.
+   --max-media-size    Maximum size in MB for media files specifically. Default: 100.
+   
+   -v, --verbose       Verbose output.
+   --force             Force re-download existing files.
+Advanced Features (Make it Professional):
+Resume Capability: Check if file exists locally with same size before re-downloading (unless --force used).
+Retry Logic: Exponential backoff for failed requests (5xx errors, timeouts). Max 3 retries.
+MIME-Type Validation: Verify content-type matches extension, handle misconfigured servers.
+Rate Limit Detection: If HTTP 429 (Too Many Requests) received, pause for 60 seconds then resume.
+Dynamic URL Handling: Handle relative URLs, absolute URLs, protocol-relative URLs (//), and query parameters (save files with hashed query strings to avoid collisions).
+Smart Duplicate Prevention: Use sets to track visited URLs (normalized).
+Link Rewriting: Rewrite HTML/CSS links to work locally (convert absolute URLs to relative paths).
+Media Skipping Logic: When media is disabled, extract media URLs but log them in the report under skipped_media category with their estimated sizes (read from Content-Length header if available via HEAD request).
+Comprehensive Reporting (JSON format):
+Generate a detailed final report report.json in the output directory with this exact structure:
+JSON
+Copy
+{
+  "scan_info": {
+    "target": "https://example.com",
+    "start_time": "2026-03-22T22:16:00",
+    "end_time": "2026-03-22T22:45:00",
+    "duration_seconds": 1740,
+    "threads_used": 20,
+    "wordlist_used": "common.txt",
+    "media_settings": {
+      "images_enabled": true,
+      "videos_enabled": false,
+      "audio_enabled": true,
+      "max_media_size_mb": 50
+    }
+  },
+  "statistics": {
+    "total_files_attempted": 1500,
+    "files_downloaded_success": 1450,
+    "files_downloaded_failed": 50,
+    "hidden_files_discovered": 30,
+    "hidden_files_downloaded_success": 25,
+    "hidden_files_downloaded_failed": 5,
+    "total_size_mb": 45.2,
+    "skipped_media": {
+      "count": 25,
+      "estimated_size_saved_mb": 150.5,
+      "urls": [
+        {"url": "https://example.com/video.mp4", "reason": "videos_disabled", "size_mb": 45.2},
+        {"url": "https://example.com/large-image.jpg", "reason": "size_limit", "size_mb": 120}
+      ]
+    }
+  },
+  "downloaded_files": {
+    "crawled": [
+      {"url": "https://example.com/index.php", "local_path": "mirror/example.com/index.php", "size_bytes": 2048, "status": "success", "type": "html"},
+      {"url": "https://example.com/logo.png", "local_path": "mirror/example.com/logo.png", "size_bytes": 5120, "status": "success", "type": "image"}
+    ],
+    "hidden": [
+      {"url": "https://example.com/.env", "local_path": "mirror/example.com/.env", "size_bytes": 512, "status": "success", "risk": "critical"}
+    ]
+  },
+  "failed_files": {
+    "crawled": [...],
+    "hidden": [...]
+  },
+  "discovered_directories": [...]
+}
+Error Handling:
+Handle SSL certificate errors (option to ignore).
+Handle Windows-specific filename sanitization (replace < > : " | ? * and reserved names like CON, PRN, etc.).
+Handle long path issues on Windows (use \\?\ prefix when necessary).
+Graceful shutdown on KeyboardInterrupt (Ctrl+C) with intermediate report generation.
+Specific Implementation Details:
+Smart PHP Logic: Create a function should_download_php(url, response) that returns True only if:
+The URL ends with backup extensions (.php.bak, etc.), OR
+The response content contains PHP opening tags or typical PHP syntax patterns (indicating source leak).
+Media Filtering Logic: Create a function is_media_file(url) that classifies URLs into image, video, audio, or other based on extension and Content-Type. Skip downloading if the category is disabled in arguments, but still record it in the report.
+Hidden File Detection: When a directory is discovered (e.g., /uploads/), immediately spawn checks for:
+wordlist_item (e.g., /uploads/config.php)
+wordlist_item with extensions (e.g., /uploads/backup.zip)
+User-Agent Rotation: Implement a class StealthRequest that manages headers rotation and delay implementation.
+Example Usage to Support:
+bash
+Copy
+# Basic crawl without images and videos (text only)
+python web_recon.py https://example.com --no-images --no-videos
+
+# Download everything including large media up to 500MB
+python web_recon.py https://example.com --max-media-size 500
+
+# Images only, no videos or audio
+python web_recon.py https://example.com --no-videos --no-audio
+
+# Full mirror with all options
+python web_recon.py https://example.com -e php -l common.txt -t 20 -d 0.1,2 -m 500 -o my_downloads --max-media-size 50
+Deliverables:
+Complete web_recon.py script with all features above.
+A sample wordlist.txt file with at least 50 common sensitive files/directories (.env, config.php, admin, backup.zip, etc.).
+requirements.txt listing all dependencies.
+Code Quality Requirements:
+Use type hints where appropriate.
+Include docstrings for all classes and functions.
+Add comments for complex logic (especially the PHP detection, media filtering, and anti-detection parts).
+Follow PEP 8 style guide.
+Ensure thread-safety for shared data structures (use locks where necessary).
+Important: The script must be designed for authorized penetration testing and security auditing only. Include a disclaimer comment at the top of the file stating that it should only be used on systems you own or have explicit permission to test.
+plain
+Copy
+
+## 🎯 أمثلة على استخدام الخيار الجديد
+
+```bash
+# 1. تحميل النص فقط بدون أي وسائط (أسرع للمواقع الثقيلة)
+python web_recon.py https://example.com --no-media
+
+# 2. تحميل الصور فقط (لأرشفة معرض صور)
+python web_recon.py https://example.com --no-videos --no-audio
+
+# 3. تحميل كل شيء ما عدا الفيديوهات الكبيرة (توفير مساحة)
+python web_recon.py https://example.com --max-media-size 20
+
+# 4. تحميل فيديوهات صغيرة فقط (أقل من 10 ميجا) بدون صور كبيرة
+python web_recon.py https://example.com --max-media-size 10 --max-file-size 50
+
+# 5. تجاهل الصور gif الثقيلة فقط (عبر -e) مع السماح بباقي الصور
+python web_recon.py https://example.com -e gif --images
+📊 الفائدة من هذه الإضافة
+Table
+السيناريو	الفائدة
+مواقع الأخبار الثقيلة	توفير 80% من الوقت والمساحة بتخطي الفيديوهات
+أرشفة الوثائق	تركيز التحميل على HTML/PDF فقط
+اختراق الأداء	تحميل الصور فقط للبحث عن EXIF data
+مواقع التواصل	تجنب تحميل آلاف الصور المصغرة (thumbnails)
+اتصال بطيء	--max-media-size 5 لتحميل الضروري فقط
